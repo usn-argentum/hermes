@@ -1,4 +1,4 @@
 # hermes
-*High-level ROS Messenger Easy System*
+*High-level Easy ROS Messenger Embedded System*
 
 A µROS simplification layer. Built to feel like our other HAL; Janus.
