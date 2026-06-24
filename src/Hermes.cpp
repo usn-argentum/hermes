@@ -27,34 +27,6 @@ bool Context::get_inited()
     return inited;
 }
 
-template <typename T>
-bool Publisher<T>::get_inited()
-{
-    return inited;
-}
-
-template <typename T>
-inline bool Publisher<T>::publish(const T &msg)
-{
-  if (!inited) return false;
-  return rcl_publish(&publisher, &msg, nullptr) == RCL_RET_OK;
-}
-
-template <typename T>
-inline void Subscriber<T>::callback_internal(const void* msg, void* ctx)
-{
-  auto* self = static_cast<Subscriber<T>*>(ctx);
-  if (msg && self && self->callback_func) {
-    self->callback_func(static_cast<const T*>(msg));
-  }
-}
-
-template <typename T>
-bool Subscriber<T>::get_inited()
-{
-    return inited;
-}
-
 bool Node::get_inited()
 {
     return inited;
