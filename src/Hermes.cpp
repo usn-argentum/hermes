@@ -77,6 +77,8 @@ bool Timer::get_inited()
     return inited;
 }
 
-// hack to fix compilation on pio
-void setup() {}
-void loop() {}
+#ifdef BUILDING_LOCAL_TEST
+    // pio compilation fix dont upload this it wont do anything
+    void setup() {}
+    void loop() {}
+#endif
