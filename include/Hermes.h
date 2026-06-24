@@ -1,118 +1,150 @@
+#pragma once
+
 #include <Arduino.h>
 #include <micro_ros_platformio.h>
+
 #include <rcl/rcl.h>
+#include <rcl/timer.h>
 #include <rclc/rclc.h>
 #include <rclc/executor.h>
-#include <std_msgs/msg/int32.h>
+
 #include <std_msgs/msg/string.h>
+#include <std_msgs/msg/int32.h>
 #include <std_msgs/msg/float32.h>
 
-class ROSNode
+// ROS Context
+class Context {
+  private:
+    rcl_allocator_t allocator;
+    rclc_support_t support;
+    rclc_executor_t executor;
+    bool inited;
 
-namespace Hermes {
-rcl_publisher_t publisher;
-rcl_publisher_t publisher_message;
-std_msgs__msg__Int32 msg;
-std_msgs__msg__String received_msg;
-std_msgs__msg__String send_msg; 
-char received_buffer[50];
-char send_buffer[100];
-rcl_subscription_t subscriber;
+  public:
+    Context() = default;
 
-const char* kNodeName = "teensy";
-const char* kPublisherTopic = "micro_ros_response";
-const char* kSubscriberTopic = "micro_ros_name";
-const int kExecutorTimeout = 100;  // ms
-const size_t kDomainId = 8;  // ROS domain ID
+    bool init(size_t handles);
+    void spin(unsigned long timeout);
+    bool get_inited();
 
-rclc_executor_t executor;
-rclc_support_t support;
-rcl_allocator_t allocator;
-rcl_node_t node;
-rcl_timer_t timer;
+    rcl_allocator_t* get_allocator() { return &allocator; }
+    rclc_support_t* get_support() { return &support; }
+    rclc_executor_t* get_executor() { return &executor; }
+};
 
-#define RCCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){error_loop();}}
-#define RCSOFTCHECK(fn) { rcl_ret_t temp_rc = fn; if((temp_rc != RCL_RET_OK)){}}
+extern Context hermes;
 
-// Error handle loop
-void error_loop() {
-  while(1) {
-    delay(100);
-  }
-}
+// ROS Nodes
+class Node {
+  private:
+    rcl_node_t node;
+    Context& context;
+    bool inited;
 
-void timer_callback(rcl_timer_t * timer, int64_t last_call_time) {
-  RCLC_UNUSED(last_call_time);
-  if (timer != NULL) {
-    RCSOFTCHECK(rcl_publish(&publisher, &msg, NULL));
-    msg.data++;
-  }
-}
+  public:
+    Node(Context& ctx, const char* name, const char* ns) :
+      context{ ctx } {
+        node = rcl_get_zero_initialized_node();
+        rcl_ret_t rc = rclc_node_init_default(&node, name, ns, context.get_support());
+        if (rc == RCL_RET_OK) { inited = true; }
+    }
 
-void SubscriptionCallback(const void* msgin);
+    bool get_inited();
+    rcl_node_t* get_node() { return &node; }
+    Context* get_context() { return &context; }
+};
 
-void init()
-{
-  received_msg.data.data = received_buffer;
-  received_msg.data.capacity = sizeof(received_buffer);
+class Timer {
+  private:
+    bool inited;
+    rcl_timer_t timer;
+    Node& ros_node;
 
-  set_microros_serial_transports(Serial);
-  delay(2000);
-  Serial1.println("Hello from teensy 1!");
+  public:
+    Timer(Node& node, uint64_t interval, void (*cb)(rcl_timer_t*, int64_t)) :
+      ros_node{ node } {
+        timer = rcl_get_zero_initialized_timer();
+        uint64_t period = interval * 1000000;
+        rcl_ret_t rc = rclc_timer_init_default2(
+          &timer, 
+          node.get_context()->get_support(), 
+          period,
+          cb,
+          false
+        );
+        if (rc != RCL_RET_OK) { return; }
 
-  allocator = rcl_get_default_allocator();
+        rc = rclc_executor_add_timer(
+            node.get_context()->get_executor(),
+            &timer
+        );
 
-  //create init_options
-  RCCHECK(rclc_support_init(&support, 0, NULL, &allocator));
+        if (rc == RCL_RET_OK) { inited = true; }
+    }
 
-  // create node
-  RCCHECK(rclc_node_init_default(&node, "micro_ros_platformio_node", "", &support));
+    bool start();
+    bool stop();
+    bool get_inited();
+};
 
-  // create publisher
-  RCCHECK(rclc_publisher_init_default(
-    &publisher,
-    &node,
-    ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32),
-    "micro_ros_platformio_node_publisher"));
+template <typename T> 
+class Publisher {
+  private:
+    rcl_publisher_t publisher;
+    Node& node;
+    const rosidl_message_type_support_t* type_support;
+    bool inited;
 
-  if (rclc_subscription_init_default(&subscriber, &node,
-      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, String),
-      kSubscriberTopic) != RCL_RET_OK) {}
+  public:
+    Publisher(Node& node_ref, const rosidl_message_type_support_t* type, const char* topic) :
+      node{ node_ref }, type_support{ type } {
+        publisher = rcl_get_zero_initialized_publisher();
+        rcl_ret_t rc = rclc_publisher_init_default(
+          &publisher,
+          node.get_node(),
+          type_support,
+          topic
+        );
+        if (rc == RCL_RET_OK) { inited = true; }
+    }
 
-  const unsigned int timer_timeout = 1000;
-  RCCHECK(rclc_timer_init_default(
-    &timer,
-    &support,
-    RCL_MS_TO_NS(timer_timeout),
-    timer_callback));
+    bool get_inited();
+    bool publish(const T& msg);
+};
 
-  // create executor
-  RCCHECK(rclc_executor_init(&executor, &support.context, 2, &allocator));
-  RCCHECK(rclc_executor_add_timer(&executor, &timer));
+template <typename T>
+class Subscriber {
+  private:
+    rcl_subscription_t subscriber;
+    Node& node;
+    T msg_buf;
+    void (*callback_func)(const T*);
+    bool inited;
 
-  if (rclc_executor_add_subscription(&executor, &subscriber, &received_msg,
-      &SubscriptionCallback, ON_NEW_DATA) != RCL_RET_OK) {
-  }
+    static void callback_internal(const void* msg, void* ctx);
+  
+  public:
+    Subscriber(Node& node_ref, const rosidl_message_type_support_t* type, const char* topic, void (*cb)(const T*)) :
+      node{ node_ref }, callback_func{ cb } {
+        subscriber = rcl_get_zero_initialized_subscription();
+        rcl_ret_t rc = rclc_subscription_init_default(
+            &subscriber, 
+            node.get_node(), 
+            type, 
+            topic
+        );
+        if (rc != RCL_RET_OK) return;
 
-  msg.data = 0;
-}
+        rc = rclc_executor_add_subscription_with_context(
+            node.get_context()->get_executor(),
+            &subscriber,
+            &msg_buf,
+            &Subscriber::callback_internal,
+            this,
+            ON_NEW_DATA
+        );
+        if (rc == RCL_RET_OK) { inited = true; }
+    }
 
-void loop()
-{
-  RCSOFTCHECK(rclc_executor_spin_some(&executor, RCL_MS_TO_NS(100)));
-}
-
-void SubscriptionCallback(const void* msgin) {
-  digitalWrite(LED_BUILTIN, HIGH);
-  const std_msgs__msg__String* msg = (const std_msgs__msg__String*)msgin;
-  Serial1.print("[SUB] Received: ");
-  Serial1.println(msg->data.data);
-  delay(100);
-  digitalWrite(LED_BUILTIN, LOW);
-
-  // Create response message: "Hello <received_name>!"
-  //snprintf(response_buffer, sizeof(response_buffer), "Hello %s!", msg->data.data);
-  //response_msg.data.size = strlen(response_buffer);
-
-}
-}
+    bool get_inited();
+};
