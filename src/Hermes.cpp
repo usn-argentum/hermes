@@ -2,15 +2,27 @@
 #include <std_msgs/msg/int32.h>
 #include <std_msgs/msg/float32.h>
 
-bool Context::init(size_t handles)
+bool Context::init(size_t handles, size_t domain_id)
 {
-    allocator = rcl_get_default_allocator();
+    allocator = rcl_get_default_allocator();    
 
-    rcl_ret_t rc = rclc_support_init(&support, 0, nullptr, &allocator);
+    rcl_init_options_t init_options = rcl_get_zero_initialized_init_options();
+    
+    rcl_ret_t rc;
+    //rcl_ret_t rc = rcl_init_options_init(&init_options, allocator);
+    //if (rc != RCL_RET_OK) { return false; }
+
+    //rc = rcl_init_options_set_domain_id(&init_options, domain_id);
+    //if (rc != RCL_RET_OK) { return false; }
+    
+    //rc = rclc_support_init_with_options(&support, 0, nullptr, &init_options, &allocator);
+    rc = rclc_support_init(&support, 0, nullptr, &allocator);
     if (rc != RCL_RET_OK) { return false; }
-
+    
     rc = rclc_executor_init(&executor, &support.context, handles, &allocator);
     if (rc != RCL_RET_OK) { return false; }
+
+    rc = rcl_init_options_fini(&init_options);
 
     inited = true;
     return true;

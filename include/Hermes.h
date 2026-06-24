@@ -23,7 +23,7 @@ class Context {
   public:
     Context() = default;
 
-    bool init(size_t handles);
+    bool init(size_t handles, size_t domain_id);
     void spin(unsigned long timeout);
     bool get_inited();
 
@@ -46,6 +46,7 @@ class Node {
       context{ ctx } {
         node = rcl_get_zero_initialized_node();
         rcl_ret_t rc = rclc_node_init_default(&node, name, ns, context.get_support());
+        
         if (rc == RCL_RET_OK) { inited = true; }
     }
 
